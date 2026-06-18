@@ -1,4 +1,4 @@
-N# No-Frills-Start-Page
+# No Frills Start Page
 
 A clean, fast Chrome/Brave new-tab replacement with editable site tiles, live screenshot thumbnails, and a customizable dock — no bloat, no tracking.
 
@@ -75,3 +75,4 @@ The key is stored locally (`chrome.storage.local`) on that device only — it is
 - `alarms` — used for the once-a-day Bing photo check.
 
 No data leaves your browser except direct, user-initiated requests to Bing (photo of the day) or Pexels (image search), and screenshot captures of the sites you've added as tiles.
+

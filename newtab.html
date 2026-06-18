@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Start Page</title>
+<link rel="stylesheet" href="newtab.css" />
+</head>
+<body>
+  <button id="optionsBtn" title="Settings">⚙</button>
+  <div id="grid" class="grid"></div>
+
+  <div id="overlay" class="overlay hidden">
+    <div class="modal">
+      <h2 id="modalTitle">Add Tile</h2>
+      <label>Name</label>
+      <input id="nameInput" type="text" placeholder="e.g. Youtube" />
+      <label>URL</label>
+      <input id="urlInput" type="text" placeholder="https://example.com" />
+
+      <label>Thumbnail</label>
+      <div class="thumb-upload-row">
+        <div id="thumbPreview" class="thumb-preview"></div>
+        <div class="thumb-upload-actions">
+          <button id="uploadThumbBtn" type="button">Upload image…</button>
+          <button id="removeThumbBtn" type="button" class="hidden">Remove</button>
+          <input id="thumbFileInput" type="file" accept="image/*" class="hidden" />
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button id="deleteBtn" class="danger hidden">Delete</button>
+        <div class="spacer"></div>
+        <button id="cancelBtn">Cancel</button>
+        <button id="saveBtn" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="dock" class="dock"></div>
+
+  <div id="dockContextMenu" class="context-menu hidden">
+    <button id="dockContextEditBtn" type="button">Edit</button>
+  </div>
+
+  <div id="dockOverlay" class="overlay hidden">
+    <div class="modal">
+      <h2 id="dockModalTitle">Add to dock</h2>
+      <label>URL</label>
+      <input id="dockUrlInput" type="text" placeholder="https://example.com" />
+      <div class="modal-actions">
+        <button id="dockDeleteBtn" class="danger hidden">Delete</button>
+        <div class="spacer"></div>
+        <button id="dockCancelBtn">Cancel</button>
+        <button id="dockSaveBtn" class="primary">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settingsBackdrop" class="settings-backdrop hidden"></div>
+  <div id="settingsPanel" class="settings-panel">
+    <div class="settings-header">
+      <h2>Settings</h2>
+      <button id="closeSettingsBtn" class="close-btn" title="Close">✕</button>
+    </div>
+
+    <div class="settings-body">
+      <section>
+        <h3>Theme</h3>
+        <div class="theme-toggle">
+          <button id="lightThemeBtn" type="button" data-theme="light">Light</button>
+          <button id="darkThemeBtn" type="button" data-theme="dark">Dark</button>
+        </div>
+      </section>
+
+      <section>
+        <h3>Background color</h3>
+        <div class="row">
+          <label class="color-field">
+            <span>Light mode</span>
+            <input id="bgColorLight" type="color" />
+          </label>
+          <label class="color-field">
+            <span>Dark mode</span>
+            <input id="bgColorDark" type="color" />
+          </label>
+        </div>
+      </section>
+
+      <section>
+        <h3>Background image</h3>
+
+        <div class="row">
+          <button id="loadBingBtn">Bing photo of the day</button>
+          <button id="clearImageBtn">Clear</button>
+        </div>
+
+        <label class="checkbox-row">
+          <input id="bingDailyToggle" type="checkbox" />
+          Automatically switch to the new Bing photo each day
+        </label>
+
+        <div class="search-row">
+          <input id="imageSearchInput" type="text" placeholder="Search images (e.g. mountains)" />
+          <button id="imageSearchBtn">Search</button>
+        </div>
+
+        <div id="pexelsKeyRow" class="pexels-key-row hidden">
+          <p class="hint">
+            Image search uses the free <a href="https://www.pexels.com/api/" target="_blank" rel="noopener">Pexels API</a>.
+            Paste your free API key to enable it.
+          </p>
+          <input id="pexelsKeyInput" type="text" placeholder="Pexels API key" />
+          <button id="savePexelsKeyBtn">Save key</button>
+        </div>
+
+        <div id="imageGrid" class="image-grid"></div>
+      </section>
+
+      <section>
+        <h3>Layout</h3>
+
+        <label class="slider-label">
+          Spacing between tiles
+          <span id="spacingValue" class="value"></span>
+        </label>
+        <input id="spacing" type="range" min="0" max="60" step="1" />
+
+        <label class="slider-label">
+          Tile width
+          <span id="tileWidthValue" class="value"></span>
+        </label>
+        <input id="tileWidth" type="range" min="120" max="400" step="5" />
+
+        <label class="slider-label">
+          Tile height
+          <span id="tileHeightValue" class="value"></span>
+        </label>
+        <input id="tileHeight" type="range" min="80" max="300" step="5" />
+
+        <label class="slider-label">
+          Title text padding
+          <span id="titlePaddingValue" class="value"></span>
+        </label>
+        <input id="titlePadding" type="range" min="0" max="30" step="1" />
+
+        <label class="slider-label">
+          Page padding
+          <span id="pagePaddingValue" class="value"></span>
+        </label>
+        <input id="pagePadding" type="range" min="0" max="120" step="5" />
+
+        <label class="slider-label">
+          Tiles per row
+          <span id="tilesPerRowValue" class="value"></span>
+        </label>
+        <input id="tilesPerRow" type="range" min="0" max="10" step="1" />
+      </section>
+
+      <section>
+        <h3>Dock position</h3>
+        <div class="theme-toggle dock-pos-toggle">
+          <button id="dockPosBottomBtn" type="button" data-pos="bottom">Bottom</button>
+          <button id="dockPosTopBtn" type="button" data-pos="top">Top</button>
+          <button id="dockPosLeftBtn" type="button" data-pos="left">Left</button>
+          <button id="dockPosRightBtn" type="button" data-pos="right">Right</button>
+        </div>
+      </section>
+
+      <section>
+        <h3>Thumbnails</h3>
+
+        <label class="slider-label">
+          Wait before taking screenshot
+          <span id="screenshotDelayValue" class="value"></span>
+        </label>
+        <input id="screenshotDelay" type="range" min="0" max="8000" step="250" />
+        <p class="hint">
+          Increase this if a thumbnail captures a loading spinner instead of the real page (e.g. Disney+).
+        </p>
+      </section>
+
+      <section>
+        <h3>Backup</h3>
+        <p class="hint">
+          Your tiles and settings automatically sync across devices via your Chrome account.
+          Export/import is for manual backups or moving data outside of sync.
+        </p>
+        <div class="row">
+          <button id="exportBtn">Export</button>
+          <button id="importBtn">Import…</button>
+          <input id="importFile" type="file" accept="application/json" class="hidden" />
+        </div>
+      </section>
+
+      <div class="row">
+        <button id="resetBtn">Reset to defaults</button>
+        <span id="savedNote" class="saved-note hidden">Saved</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="newtab.js"></script>
+</body>
+</html>

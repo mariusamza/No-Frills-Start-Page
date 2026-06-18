@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "No Frills Start Page",
+  "version": "0.1.0",
+  "description": "A clean, fast Chrome/Brave new-tab replacement with editable site tiles, live screenshot thumbnails, and a customizable dock — no bloat, no tracking.",
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "chrome_url_overrides": {
+    "newtab": "newtab.html"
+  },
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab",
+    "alarms"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
