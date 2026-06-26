@@ -8,8 +8,8 @@ const DEFAULT_SCREENSHOT_DELAY_MS = 1500;
 // Re-encoding to WebP at a capped resolution keeps visual quality at the
 // sizes it's actually shown at while cutting both storage size and the time
 // the browser spends decoding it on every new tab page load.
-const THUMB_MAX_DIMENSION = 640;
-const THUMB_WEBP_QUALITY = 0.82;
+const THUMB_MAX_DIMENSION = 960;
+const THUMB_WEBP_QUALITY = 0.88;
 
 // The capture window needs real OS focus to reliably render (an unfocused/
 // occluded popup can be left un-painted by the window manager on some

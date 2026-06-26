@@ -144,6 +144,15 @@ html[data-dock-pos="right"] body { padding-right: calc(var(--page-padding, 20px)
   object-position: top;
 }
 
+/* While a screenshot is still being captured, the tile shows the site favicon
+   as a small centered icon instead of a stretched full-cover image. */
+.thumb.favicon-placeholder img {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  object-position: center;
+}
+
 .label {
   padding: var(--label-padding, 10px) 12px;
   font-size: 13px;

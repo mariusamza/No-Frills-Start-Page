@@ -91,8 +91,9 @@ let dockItems = [];
 let editingId = null; // null => adding new tile
 let editingDockId = null; // null => adding new dock item
 let contextMenuDockId = null;
-let pendingThumbDataUrl = null; // set when the user picks a new image in the modal
+let pendingThumbBlob = null; // set when the user picks a new image in the modal
 let pendingThumbRemoved = false; // set when the user removes the custom thumbnail
+let pendingPreviewUrl = null; // temporary object URL backing the modal preview of a freshly picked image
 let settings = { ...DEFAULT_SETTINGS };
 let savedNoteTimer = null;
 let draggedId = null;
@@ -123,10 +124,10 @@ function debounce(fn, waitMs) {
 }
 
 // Tiles and settings live in chrome.storage.sync so they follow the user
-// across any Chrome profile they're signed into. Screenshots (thumbs) and
-// the Pexels key stay in chrome.storage.local: thumbs are per-device capture
-// results that would blow past sync's 8KB-per-item / 100KB-total quota, and
-// there's no benefit to syncing a personal API key across machines.
+// across any Chrome profile they're signed into. The Pexels key stays in
+// chrome.storage.local (no benefit to syncing a personal API key), and
+// screenshot thumbnails live in IndexedDB (see below) — both are per-device
+// data that would blow past sync's 8KB-per-item / 100KB-total quota.
 
 async function loadTiles() {
   const syncData = await chrome.storage.sync.get("tiles");
@@ -188,34 +189,100 @@ async function persistDockItems() {
   }
 }
 
-// Reads/writes of the shared "thumbs" object must be serialized: render()
-// kicks off a capture for every tile that's missing a thumbnail without
-// awaiting them, so on a fresh install several setThumb() calls can run
-// concurrently. Without this queue, each does its own read-modify-write on
-// the same object, and the slower call's write clobbers the faster one's —
-// silently losing that tile's cached screenshot every time.
-let thumbsQueue = Promise.resolve();
-function withThumbsLock(fn) {
-  const result = thumbsQueue.then(fn, fn);
-  thumbsQueue = result.then(() => {}, () => {}); // keep the queue alive even if fn rejects
-  return result;
+// Thumbnails are stored as binary WebP Blobs in IndexedDB (one record per tile,
+// keyed by tile id). Blobs avoid the ~33% base64 bloat of data URLs, and on
+// load each Blob becomes a cheap object URL — the browser decodes straight from
+// binary instead of doing a synchronous base64 decode on the main thread for
+// every tile. Because each thumbnail is an independent keyed record and IDB
+// serializes its own transactions, concurrent captures to different ids can't
+// clobber each other, so no write lock is needed.
+const THUMB_DB_NAME = "startPageThumbs";
+const THUMB_STORE = "thumbs";
+let thumbDbPromise = null;
+
+function openThumbDB() {
+  if (thumbDbPromise) return thumbDbPromise;
+  thumbDbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(THUMB_DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(THUMB_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  return thumbDbPromise;
 }
 
-async function getThumb(id) {
-  return withThumbsLock(async () => {
-    const data = await chrome.storage.local.get("thumbs");
-    const thumbs = data.thumbs || {};
-    return thumbs[id];
-  });
+function idbRequest(mode, fn) {
+  return openThumbDB().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction(THUMB_STORE, mode);
+    const req = fn(tx.objectStore(THUMB_STORE));
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  }));
 }
 
-async function setThumb(id, dataUrl) {
-  return withThumbsLock(async () => {
-    const data = await chrome.storage.local.get("thumbs");
-    const thumbs = data.thumbs || {};
-    thumbs[id] = { dataUrl, ts: Date.now() };
-    await chrome.storage.local.set({ thumbs });
-  });
+const idbPut = (id, value) => idbRequest("readwrite", (s) => s.put(value, id));
+const idbDelete = (id) => idbRequest("readwrite", (s) => s.delete(id));
+const idbClear = () => idbRequest("readwrite", (s) => s.clear());
+
+// Reads every record in one transaction, returning [key, value] pairs.
+function idbEntries() {
+  return openThumbDB().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction(THUMB_STORE, "readonly");
+    const entries = [];
+    tx.objectStore(THUMB_STORE).openCursor().onsuccess = (e) => {
+      const cur = e.target.result;
+      if (cur) {
+        entries.push([cur.key, cur.value]);
+        cur.continue();
+      } else {
+        resolve(entries);
+      }
+    };
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+
+// One-time migration of existing installs from the old chrome.storage.local
+// "thumbs" object (data URLs) to IndexedDB Blobs. Idempotent: once the legacy
+// key is removed it no-ops.
+async function migrateThumbsToIDB() {
+  const data = await chrome.storage.local.get("thumbs");
+  if (!data.thumbs) return;
+  for (const [id, rec] of Object.entries(data.thumbs)) {
+    if (!rec || !rec.dataUrl) continue;
+    try {
+      const blob = await (await fetch(rec.dataUrl)).blob();
+      await idbPut(id, { blob, ts: rec.ts || Date.now() });
+    } catch (err) {
+      // Skip any thumbnail that fails to convert; it'll just be recaptured.
+    }
+  }
+  await chrome.storage.local.remove("thumbs");
+}
+
+// In-memory map of tile id -> { url, ts }, where `url` is an object URL created
+// from the stored Blob. Populated once at startup so render() can paint every
+// cached thumbnail synchronously in a single pass.
+let thumbsCache = {};
+
+async function loadThumbsCache() {
+  await migrateThumbsToIDB();
+  const entries = await idbEntries();
+  thumbsCache = {};
+  for (const [id, rec] of entries) {
+    thumbsCache[id] = { url: URL.createObjectURL(rec.blob), ts: rec.ts };
+  }
+}
+
+function getThumb(id) {
+  return thumbsCache[id];
+}
+
+async function setThumb(id, blob) {
+  const ts = Date.now();
+  await idbPut(id, { blob, ts });
+  if (thumbsCache[id]) URL.revokeObjectURL(thumbsCache[id].url);
+  thumbsCache[id] = { url: URL.createObjectURL(blob), ts };
 }
 
 async function loadSettings() {
@@ -654,7 +721,9 @@ importFile.addEventListener("change", async () => {
     await persistDockItems();
     await persistSettings.flush();
     // Imported tiles may point at different URLs than any cached thumbnails, so drop the cache.
-    await chrome.storage.local.remove("thumbs");
+    await idbClear();
+    for (const id of Object.keys(thumbsCache)) URL.revokeObjectURL(thumbsCache[id].url);
+    thumbsCache = {};
 
     applySettingsToPage();
     syncSettingsControls();
@@ -678,7 +747,6 @@ function render() {
 
     const thumb = document.createElement("div");
     thumb.className = "thumb";
-    thumb.textContent = "Loading…";
 
     const label = document.createElement("div");
     label.className = "label";
@@ -699,7 +767,7 @@ function render() {
     refreshBtn.title = "Refresh thumbnail";
     refreshBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      thumb.textContent = "Loading…";
+      showFaviconPlaceholder(tile, thumb);
       refreshThumbnail(tile, thumb);
     });
 
@@ -1039,22 +1107,38 @@ const pendingCaptureObserver = new IntersectionObserver(
   { rootMargin: "300px" }
 );
 
-async function loadThumbnail(tile, thumbEl) {
-  const cached = await getThumb(tile.id);
+function loadThumbnail(tile, thumbEl) {
+  const cached = getThumb(tile.id);
   if (cached) {
-    setThumbImage(thumbEl, cached.dataUrl);
+    setThumbImage(thumbEl, cached.url);
     return;
   }
-  // No thumbnail saved yet (new tile) — capture it once it's visible.
+  // No screenshot saved yet — show the site favicon instantly as a placeholder
+  // (like a two-tier load) instead of blank text, then capture the real
+  // screenshot once the tile is visible.
+  showFaviconPlaceholder(tile, thumbEl);
   thumbEl.dataset.tileId = tile.id;
   pendingCaptureObserver.observe(thumbEl);
 }
 
-function setThumbImage(thumbEl, dataUrl) {
+function showFaviconPlaceholder(tile, thumbEl) {
+  thumbEl.textContent = "";
+  thumbEl.innerHTML = "";
+  thumbEl.classList.add("favicon-placeholder");
+  const img = document.createElement("img");
+  img.src = faviconUrl(tile.url);
+  img.alt = "";
+  thumbEl.appendChild(img);
+}
+
+function setThumbImage(thumbEl, url) {
+  thumbEl.classList.remove("favicon-placeholder");
   thumbEl.textContent = "";
   thumbEl.innerHTML = "";
   const img = document.createElement("img");
-  img.src = dataUrl;
+  img.src = url;
+  img.decoding = "async";
+  img.loading = "lazy";
   thumbEl.appendChild(img);
 }
 
@@ -1088,10 +1172,13 @@ function refreshThumbnail(tile, thumbEl) {
       return;
     }
     if (resp && resp.ok) {
-      await setThumb(tile.id, resp.dataUrl);
+      // The worker returns a WebP data URL (Blobs can't cross the message
+      // channel); convert to a Blob once and store it as binary in IndexedDB.
+      const blob = await (await fetch(resp.dataUrl)).blob();
+      await setThumb(tile.id, blob);
       // Only update visible tile if it's still in the DOM for this id.
       const currentEl = grid.querySelector(`.tile[data-id="${tile.id}"] .thumb`);
-      if (currentEl) setThumbImage(currentEl, resp.dataUrl);
+      if (currentEl) setThumbImage(currentEl, getThumb(tile.id).url);
     } else {
       console.error("[thumbnail] capture error for", tile.url, resp && resp.error);
       if (!thumbEl.querySelector("img")) thumbEl.textContent = "No preview";
@@ -1101,15 +1188,17 @@ function refreshThumbnail(tile, thumbEl) {
 
 async function openModal(tile) {
   editingId = tile ? tile.id : null;
-  pendingThumbDataUrl = null;
+  pendingThumbBlob = null;
   pendingThumbRemoved = false;
   modalTitle.textContent = tile ? "Edit Tile" : "Add Tile";
   nameInput.value = tile ? tile.name : "";
   urlInput.value = tile ? tile.url : "";
   deleteBtn.classList.toggle("hidden", !tile);
 
-  const cached = tile ? await getThumb(tile.id) : null;
-  setThumbPreview(cached ? cached.dataUrl : "");
+  // Show the cached thumbnail's object URL directly (owned by thumbsCache — not
+  // revoked here). pendingPreviewUrl stays null so closeModal won't revoke it.
+  const cached = tile ? getThumb(tile.id) : null;
+  setThumbPreview(cached ? cached.url : "");
 
   overlay.classList.remove("hidden");
   nameInput.focus();
@@ -1118,15 +1207,19 @@ async function openModal(tile) {
 function closeModal() {
   overlay.classList.add("hidden");
   editingId = null;
-  pendingThumbDataUrl = null;
+  pendingThumbBlob = null;
   pendingThumbRemoved = false;
+  if (pendingPreviewUrl) {
+    URL.revokeObjectURL(pendingPreviewUrl);
+    pendingPreviewUrl = null;
+  }
 }
 
-function setThumbPreview(dataUrl) {
+function setThumbPreview(url) {
   thumbPreview.innerHTML = "";
-  if (dataUrl) {
+  if (url) {
     const img = document.createElement("img");
-    img.src = dataUrl;
+    img.src = url;
     thumbPreview.appendChild(img);
     removeThumbBtn.classList.remove("hidden");
   } else {
@@ -1146,7 +1239,7 @@ function readImageFileAsDataUrl(file) {
   });
 }
 
-async function resizeImageDataUrl(dataUrl) {
+async function resizeImageToBlob(dataUrl) {
   const img = new Image();
   await new Promise((resolve, reject) => {
     img.onload = resolve;
@@ -1163,7 +1256,13 @@ async function resizeImageDataUrl(dataUrl) {
   canvas.height = h;
   canvas.getContext("2d").drawImage(img, 0, 0, w, h);
   // WebP gives noticeably smaller files than JPEG at the same visual quality.
-  return canvas.toDataURL("image/webp", 0.85);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error("Could not encode image"))),
+      "image/webp",
+      0.85
+    );
+  });
 }
 
 uploadThumbBtn.addEventListener("click", () => thumbFileInput.click());
@@ -1184,18 +1283,24 @@ thumbFileInput.addEventListener("change", async () => {
 
   try {
     const rawDataUrl = await readImageFileAsDataUrl(file);
-    const resized = await resizeImageDataUrl(rawDataUrl);
-    pendingThumbDataUrl = resized;
+    const blob = await resizeImageToBlob(rawDataUrl);
+    pendingThumbBlob = blob;
     pendingThumbRemoved = false;
-    setThumbPreview(resized);
+    if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
+    pendingPreviewUrl = URL.createObjectURL(blob);
+    setThumbPreview(pendingPreviewUrl);
   } catch (err) {
     alert("Could not load that image: " + err.message);
   }
 });
 
 removeThumbBtn.addEventListener("click", () => {
-  pendingThumbDataUrl = null;
+  pendingThumbBlob = null;
   pendingThumbRemoved = true;
+  if (pendingPreviewUrl) {
+    URL.revokeObjectURL(pendingPreviewUrl);
+    pendingPreviewUrl = null;
+  }
   setThumbPreview("");
 });
 
@@ -1219,12 +1324,11 @@ function isHttpUrl(value) {
 }
 
 async function removeThumbFromStorage(id) {
-  return withThumbsLock(async () => {
-    const data = await chrome.storage.local.get("thumbs");
-    const thumbs = data.thumbs || {};
-    delete thumbs[id];
-    await chrome.storage.local.set({ thumbs });
-  });
+  await idbDelete(id);
+  if (thumbsCache[id]) {
+    URL.revokeObjectURL(thumbsCache[id].url);
+    delete thumbsCache[id];
+  }
 }
 
 saveBtn.addEventListener("click", async () => {
@@ -1232,7 +1336,7 @@ saveBtn.addEventListener("click", async () => {
   const url = normalizeUrl(urlInput.value.trim());
   if (!name || !url) return;
 
-  const uploadedThumb = pendingThumbDataUrl;
+  const uploadedThumb = pendingThumbBlob;
   const thumbRemoved = pendingThumbRemoved;
 
   if (editingId) {
@@ -1280,11 +1384,12 @@ deleteBtn.addEventListener("click", async () => {
 });
 
 (async function init() {
-  await loadSettings();
+  // These four reads are independent, so run them concurrently instead of
+  // waiting on each in turn (loadThumbsCache also runs the one-time IDB
+  // migration). Each loader keeps its own storage-migration fallback.
+  await Promise.all([loadSettings(), loadTiles(), loadDockItems(), loadThumbsCache()]);
   applySettingsToPage();
   syncSettingsControls();
-  await loadTiles();
   render();
-  await loadDockItems();
   renderDock();
 })();
