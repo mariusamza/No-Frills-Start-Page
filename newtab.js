@@ -1254,7 +1254,10 @@ async function resizeImageToBlob(dataUrl) {
   const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
-  canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, 0, 0, w, h);
   // WebP gives noticeably smaller files than JPEG at the same visual quality.
   return new Promise((resolve, reject) => {
     canvas.toBlob(

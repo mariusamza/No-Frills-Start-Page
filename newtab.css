@@ -142,6 +142,7 @@ html[data-dock-pos="right"] body { padding-right: calc(var(--page-padding, 20px)
   height: 100%;
   object-fit: cover;
   object-position: top;
+  image-rendering: high-quality;
 }
 
 /* While a screenshot is still being captured, the tile shows the site favicon

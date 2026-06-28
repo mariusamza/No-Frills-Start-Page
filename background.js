@@ -113,7 +113,10 @@ async function resizeAndEncode(dataUrl, maxDimension, quality) {
     const h = Math.round(bitmap.height * scale);
 
     const canvas = new OffscreenCanvas(w, h);
-    canvas.getContext("2d").drawImage(bitmap, 0, 0, w, h);
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bitmap, 0, 0, w, h);
     const outBlob = await canvas.convertToBlob({ type: "image/webp", quality });
     return await blobToDataUrl(outBlob);
   } catch (err) {
